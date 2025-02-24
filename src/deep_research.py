@@ -715,6 +715,8 @@ class DeepSearch:
             generation_config=generation_config,
         )
 
+        print("Generating final report...\n")
+
         response = model.generate_content(user_prompt)
 
         # Format the response with inline citations
