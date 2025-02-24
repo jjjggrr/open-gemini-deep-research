@@ -147,15 +147,16 @@ The application offers three research modes that affect how deeply and broadly t
    - Maintains query history to prevent duplicates
    - Adapts number of queries based on mode settings
 
-3. **Concurrent Processing**
-   - Implements async processing with rate limiting
-   - Processes multiple queries simultaneously
-   - Uses semaphore to control concurrent API calls
-   - Maintains progress tracking for each query
+3. **Research Tree Building**
+   - Implements a tree structure to track research progress
+   - Each query gets a unique UUID for tracking
+   - Maintains parent-child relationships between queries
+   - Tracks query order and completion status
+   - Provides detailed progress visualization through JSON tree structure
 
 4. **Deep Research** (Comprehensive Mode)
    - Implements recursive research strategy
-   - Each query can generate follow-up queries
+   - Each query can generate one follow-up query
    - Reduces breadth at deeper levels (breadth/2)
    - Maintains visited URLs to avoid duplicates
    - Combines learnings from all levels
@@ -175,115 +176,40 @@ The application offers three research modes that affect how deeply and broadly t
   - Content processing and synthesis
   - Semantic similarity checking
   - Report generation
-- Implements async processing with custom rate limiting
-- Uses progress tracking system for detailed logging
+- Implements concurrent processing for queries
+- Uses progress tracking system with tree visualization
 - Maintains research tree structure for relationship mapping
-
-#### Rate Limiting with Semaphores
-
-The application uses semaphores for rate limiting concurrent API calls. A semaphore is a synchronization primitive that:
-- Controls access to a limited resource (in this case, API calls)
-- Maintains a counter of available "slots"
-- Blocks new requests when all slots are in use
-- Releases slots when operations complete
-
-Example from our implementation:
-```python
-class AsyncLimit:
-    def __init__(self, limit: int):
-        # Creates a semaphore with N slots (e.g., 8 concurrent calls)
-        self.sem = asyncio.Semaphore(limit)
-        self.loop = asyncio.get_event_loop()
-
-    async def run(self, fn: Callable[..., T], *args, **kwargs) -> T:
-        # Waits for an available slot before executing
-        async with self.sem:
-            if asyncio.iscoroutinefunction(fn):
-                return await fn(*args, **kwargs)
-            else:
-                return await self.loop.run_in_executor(None, fn, *args, **kwargs)
-```
-
-This ensures we don't overwhelm the Gemini API by:
-- Limiting concurrent API calls to 8 at a time
-- Queuing additional requests until slots become available
-- Automatically managing the release of slots
-- Maintaining efficient async processing
 
 #### Research Tree Implementation
 
-The research tree is implemented through a combination of recursive processing and state tracking:
+The research tree is implemented through the `ResearchProgress` class that tracks:
+- Query relationships (parent-child)
+- Query completion status
+- Learnings per query
+- Query order
+- Unique IDs for each query
 
-1. **Query Processing Flow**
-```python
-async def deep_research(self, query: str, breadth: int, depth: int, learnings: list[str] = []):
-    # Initialize progress tracker
-    progress = ResearchProgress(depth, breadth)
-    
-    # Limit queries based on mode
-    max_queries = {
-        "fast": 3,
-        "balanced": 7,
-        "comprehensive": 5  # Lower due to recursive multiplication
-    }[self.mode]
-    
-    # Generate and process initial queries
-    queries = self.generate_queries(
-        query,
-        min(breadth, max_queries),
-        learnings,
-        previous_queries=self.query_history
-    )
+The complete research tree structure is automatically saved to `research_tree.json` when generating the final report, allowing for later analysis or visualization of the research process.
+
+Example tree structure:
+```json
+{
+  "query": "root query",
+  "id": "uuid-1",
+  "status": "completed",
+  "depth": 2,
+  "learnings": ["learning 1", "learning 2"],
+  "sub_queries": [
+    {
+      "query": "sub-query 1",
+      "id": "uuid-2",
+      "status": "completed",
+      "depth": 1,
+      "learnings": ["learning 3"],
+      "sub_queries": [],
+      "parent_query": "root query"
+    }
+  ],
+  "parent_query": null
+}
 ```
-
-2. **State Tracking**
-```python
-class ResearchProgress:
-    def __init__(self, depth: int, breadth: int):
-        self.total_depth = depth
-        self.total_breadth = breadth
-        self.current_depth = depth
-        self.current_breadth = 0
-        # Track queries at each depth level
-        self.queries_by_depth = {}  # {depth: {query: {completed: bool, learnings: list}}}
-        self.total_queries = 0
-        self.completed_queries = 0
-```
-
-3. **Recursive Deep Diving** (Comprehensive Mode Only)
-```python
-# Only go deeper if in comprehensive mode and depth > 1
-if self.mode == "comprehensive" and depth > 1:
-    # Reduce breadth for deeper levels
-    new_breadth = min(2, math.ceil(breadth / 2))
-    new_depth = depth - 1
-
-    if processed_result['follow_up_questions']:
-        # Take only the most relevant question
-        next_query = processed_result['follow_up_questions'][0]
-        
-        # Recursive call with accumulated learnings
-        sub_results = await self.deep_research(
-            query=next_query,
-            breadth=new_breadth,
-            depth=new_depth,
-            learnings=learnings + processed_result["learnings"]
-        )
-```
-
-Key Features:
-- **Query History**: Maintains a set of previously asked queries to avoid duplicates
-- **Progress Tracking**: Records state and progress at each depth level
-- **Concurrent Processing**: Uses async/await for parallel query processing
-- **Depth Control**: Reduces breadth and depth as it goes deeper
-- **Learning Accumulation**: Combines learnings from all levels
-
-Example Flow:
-1. Initial query generates up to N sub-queries (N depends on mode)
-2. Each sub-query is processed concurrently
-3. In comprehensive mode, each query can generate one follow-up
-4. Follow-ups are processed with reduced breadth/depth
-5. All learnings are accumulated back up the tree
-6. Progress is tracked and reported at each step
-
-The tree isn't a traditional tree data structure, but rather emerges from the recursive processing pattern and state tracking in the `ResearchProgress` class.

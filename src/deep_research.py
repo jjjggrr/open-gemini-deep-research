@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import json
 import os
+import uuid
 
 import math
 
@@ -25,8 +26,10 @@ class ResearchProgress:
         self.queries_by_depth = {}
         self.query_order = []  # Track order of queries
         self.query_parents = {}  # Track parent-child relationships
-        self.total_queries = 0
+        self.total_queries = 0  # Total number of queries including sub-queries
         self.completed_queries = 0
+        self.query_ids = {}  # Store persistent IDs for queries
+        self.root_query = None  # Store the root query
 
     def start_query(self, query: str, depth: int, parent_query: str = None):
         """Record the start of a new query"""
@@ -34,14 +37,20 @@ class ResearchProgress:
             self.queries_by_depth[depth] = {}
 
         if query not in self.queries_by_depth[depth]:
+            # Generate ID only once per query
+            if query not in self.query_ids:
+                self.query_ids[query] = str(uuid.uuid4())
+                
             self.queries_by_depth[depth][query] = {
                 "completed": False,
                 "learnings": [],
-                "timestamp": len(self.query_order)  # Use position as timestamp
+                "id": self.query_ids[query]  # Use persistent ID
             }
             self.query_order.append(query)
             if parent_query:
                 self.query_parents[query] = parent_query
+            else:
+                self.root_query = query  # Set as root if no parent
             self.total_queries += 1
 
         self.current_depth = depth
@@ -51,54 +60,85 @@ class ResearchProgress:
     def add_learning(self, query: str, depth: int, learning: str):
         """Record a learning for a specific query"""
         if depth in self.queries_by_depth and query in self.queries_by_depth[depth]:
-            self.queries_by_depth[depth][query]["learnings"].append(learning)
-            self._report_progress(f"Added learning for query: {query}")
+            if learning not in self.queries_by_depth[depth][query]["learnings"]:
+                self.queries_by_depth[depth][query]["learnings"].append(learning)
+                self._report_progress(f"Added learning for query: {query}")
 
     def complete_query(self, query: str, depth: int):
         """Mark a query as completed"""
         if depth in self.queries_by_depth and query in self.queries_by_depth[depth]:
-            self.queries_by_depth[depth][query]["completed"] = True
-            self.completed_queries += 1
-            self._report_progress(f"Completed query: {query}")
+            if not self.queries_by_depth[depth][query]["completed"]:
+                self.queries_by_depth[depth][query]["completed"] = True
+                self.completed_queries += 1
+                self._report_progress(f"Completed query: {query}")
+
+                # Check if parent query exists and update its status if all children are complete
+                parent_query = self.query_parents.get(query)
+                if parent_query:
+                    self._update_parent_status(parent_query)
+
+    def _update_parent_status(self, parent_query: str):
+        """Update parent query status based on children completion"""
+        # Find all children of this parent
+        children = [q for q, p in self.query_parents.items() if p == parent_query]
+        
+        # Check if all children are complete
+        parent_depth = next((d for d, queries in self.queries_by_depth.items() 
+                           if parent_query in queries), None)
+        
+        if parent_depth is not None:
+            all_children_complete = all(
+                self.queries_by_depth[d][q]["completed"]
+                for q in children
+                for d in self.queries_by_depth
+                if q in self.queries_by_depth[d]
+            )
+            
+            if all_children_complete:
+                # Complete the parent query
+                self.complete_query(parent_query, parent_depth)
 
     def _report_progress(self, action: str):
         """Report current progress"""
         print(f"\nResearch Progress Update:")
         print(f"Action: {action}")
-        print(f"Overall Progress: {self.completed_queries}/{self.total_queries} queries completed")
 
-        print("\nResearch Tree:")
-        
-        def print_subtree(query, indent=""):
-            data = None
-            depth = None
-            # Find the query data
-            for d, queries in self.queries_by_depth.items():
-                if query in queries:
-                    data = queries[query]
-                    depth = d
-                    break
-            
-            if data:
-                status = "✓" if data["completed"] else "⋯"
-                print(f"{indent}├── [{status}] {query}")
-                if data["learnings"]:
-                    print(f"{indent}│   └── {len(data['learnings'])} learnings")
-                
-                # Find and print child queries
-                children = [q for q, p in self.query_parents.items() if p == query]
-                for child in children:
-                    print_subtree(child, indent + "    ")
+        # Build and print the tree starting from the root query
+        if self.root_query:
+            tree = self._build_research_tree()
+            print("\nQuery Tree Structure:")
+            print(json.dumps(tree, indent=2))
 
-        # Find root queries (those without parents)
-        root_queries = [q for q in self.query_order if q not in self.query_parents]
-        
-        # Print tree starting from each root
-        for query in root_queries:
-            print_subtree(query)
-
-        print(f"\nTotal Progress: {self.completed_queries}/{self.total_queries} queries completed")
+        print(f"\nOverall Progress: {self.completed_queries}/{self.total_queries} queries completed")
         print("")
+
+    def _build_research_tree(self):
+        """Build the full research tree structure"""
+        def build_node(query):
+            """Recursively build the tree node"""
+            # Find the depth for this query
+            depth = next((d for d, queries in self.queries_by_depth.items() 
+                         if query in queries), 0)
+            
+            data = self.queries_by_depth[depth][query]
+            
+            # Find all children of this query
+            children = [q for q, p in self.query_parents.items() if p == query]
+            
+            return {
+                "query": query,
+                "id": self.query_ids[query],
+                "status": "completed" if data["completed"] else "in_progress",
+                "depth": depth,
+                "learnings": data["learnings"],
+                "sub_queries": [build_node(child) for child in children],
+                "parent_query": self.query_parents.get(query)
+            }
+
+        # Start building from the root query
+        if self.root_query:
+            return build_node(self.root_query)
+        return {}
 
     def get_learnings_by_query(self):
         """Get all learnings organized by query"""
@@ -112,32 +152,6 @@ class ResearchProgress:
 
 load_dotenv()
 
-
-T = TypeVar('T')
-
-
-class AsyncLimit:
-    def __init__(self, limit: int):
-        self.sem = asyncio.Semaphore(limit)
-        self.loop = asyncio.get_event_loop()
-
-    async def run(self, fn: Callable[..., T], *args, **kwargs) -> T:
-        async with self.sem:
-            # Ensure the function runs in the correct event loop
-            if asyncio.iscoroutinefunction(fn):
-                return await fn(*args, **kwargs)
-            else:
-                return await self.loop.run_in_executor(None, fn, *args, **kwargs)
-
-    async def map(self, fn: Callable[..., T], items: List[Any]) -> List[T]:
-        # Create and await tasks properly
-        tasks = []
-        for item in items:
-            task = await self.run(fn, item)
-            tasks.append(task)
-        return tasks
-
-
 class DeepSearch:
     def __init__(self, api_key: str, mode: str = "balanced"):
         """
@@ -147,7 +161,6 @@ class DeepSearch:
         - "comprehensive": Maximum detail and coverage
         """
         self.api_key = api_key
-        self.async_limit = AsyncLimit(8)
         self.model_name = "gemini-2.0-flash"
         self.query_history = set()
         self.mode = mode
@@ -524,6 +537,9 @@ class DeepSearch:
 
     async def deep_research(self, query: str, breadth: int, depth: int, learnings: list[str] = [], visited_urls: dict[int, dict] = {}, parent_query: str = None):
         progress = ResearchProgress(depth, breadth)
+        
+        # Start the root query
+        progress.start_query(query, depth, parent_query)
 
         # Adjust number of queries based on mode
         max_queries = {
@@ -542,9 +558,10 @@ class DeepSearch:
         self.query_history.update(queries)
         unique_queries = list(queries)[:breadth]
 
-        async def process_query(query_str: str, parent_query: str = None):
+        async def process_query(query_str: str, current_depth: int, parent: str = None):
             try:
-                progress.start_query(query_str, depth, parent_query)
+                # Start this query as a sub-query of the parent
+                progress.start_query(query_str, current_depth, parent)
 
                 result = self.search(query_str)
                 processed_result = await self.process_result(
@@ -556,7 +573,7 @@ class DeepSearch:
 
                 # Record learnings
                 for learning in processed_result["learnings"]:
-                    progress.add_learning(query_str, depth, learning)
+                    progress.add_learning(query_str, current_depth, learning)
 
                 new_urls = result[1]
                 max_idx = max(visited_urls.keys()) if visited_urls else -1
@@ -566,45 +583,40 @@ class DeepSearch:
                 }
 
                 # Only go deeper if in comprehensive mode and depth > 1
-                if self.mode == "comprehensive" and depth > 1:
+                if self.mode == "comprehensive" and current_depth > 1:
                     # Reduced breadth for deeper levels
                     new_breadth = min(2, math.ceil(breadth / 2))
-                    new_depth = depth - 1
+                    new_depth = current_depth - 1
 
                     # Select most important follow-up question instead of using all
                     if processed_result['follow_up_questions']:
                         # Take only the most relevant question
                         next_query = processed_result['follow_up_questions'][0]
-
-                        sub_results = await self.deep_research(
-                            query=next_query,
-                            breadth=new_breadth,
-                            depth=new_depth,
-                            learnings=learnings +
-                            processed_result["learnings"],
-                            visited_urls=all_urls,
-                            parent_query=query_str  # Pass current query as parent
+                        
+                        # Process the sub-query
+                        sub_results = await process_query(
+                            next_query,
+                            new_depth,
+                            query_str  # Pass current query as parent
                         )
 
-                        progress.complete_query(query_str, depth)
-                        return sub_results
-
-                progress.complete_query(query_str, depth)
+                progress.complete_query(query_str, current_depth)
                 return {
-                    "learnings": learnings + processed_result["learnings"],
+                    "learnings": processed_result["learnings"],
                     "visited_urls": all_urls
                 }
 
             except Exception as e:
                 print(f"Error processing query {query_str}: {str(e)}")
-                progress.complete_query(query_str, depth)
+                progress.complete_query(query_str, current_depth)
                 return {
                     "learnings": [],
                     "visited_urls": {}
                 }
 
         # Process queries concurrently
-        results = await self.async_limit.map(process_query, unique_queries)
+        tasks = [process_query(q, depth, query) for q in unique_queries]
+        results = await asyncio.gather(*tasks)
 
         # Combine results
         all_learnings = list(set(
@@ -622,6 +634,13 @@ class DeepSearch:
                     all_urls[current_idx] = url_data
                     seen_urls.add(url_data['link'])
                     current_idx += 1
+
+        # Complete the root query after all sub-queries are done
+        progress.complete_query(query, depth)
+
+        # save the tree structure to a json file
+        with open("research_tree.json", "w") as f:
+            json.dump(progress._build_research_tree(), f)
 
         return {
             "learnings": all_learnings,
