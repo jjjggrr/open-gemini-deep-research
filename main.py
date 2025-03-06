@@ -71,11 +71,11 @@ if __name__ == "__main__":
     ))
 
     # Generate and print the final report
-    final_report = deep_search.generate_final_report(
+    final_report = asyncio.run(deep_search.generate_final_report(
         query=combined_query,
         learnings=results["learnings"],
         visited_urls=results["visited_urls"]
-    )
+    ))
 
     # Calculate elapsed time
     elapsed_time = time.time() - start_time
