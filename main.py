@@ -92,3 +92,4 @@ if __name__ == "__main__":
         f.write(final_report)
         f.write(
             f"\n\nTotal research time: {minutes} minutes and {seconds} seconds")
+            

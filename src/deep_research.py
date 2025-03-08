@@ -30,6 +30,7 @@ class ResearchProgress:
         self.root_query = None  # Store the root query
 
     async def start_query(self, query: str, depth: int, parent_query: str = None):
+        """Record the start of a new query"""
         # Generate a unique ID for this query
         query_id = str(uuid.uuid4())
         self.query_ids[query] = query_id
@@ -38,92 +39,97 @@ class ResearchProgress:
         if self.root_query is None:
             self.root_query = query
 
-        # Add to query order
-        self.query_order.append(query)
-
-        # Track parent-child relationship
-        if parent_query:
-            self.query_parents[query] = parent_query
-
-        # Initialize depth if not already present
+        # Initialize the depth level if it doesn't exist
         if depth not in self.queries_by_depth:
-            self.queries_by_depth[depth] = {
-                "total": 0,
-                "completed": 0,
-                "queries": {}
+            self.queries_by_depth[depth] = {}
+
+        # Add the query to the appropriate depth level if it's not already there
+        if query not in self.queries_by_depth[depth]:
+            self.queries_by_depth[depth][query] = {
+                "completed": False,
+                "learnings": [],
+                "sources": [],  # Add sources list to store source information
+                "id": self.query_ids[query]  # Use persistent ID
             }
+            self.query_order.append(query)
+            if parent_query:
+                self.query_parents[query] = parent_query
+            self.total_queries += 1
 
-        # Add query to depth tracking
-        self.queries_by_depth[depth]["total"] += 1
-        self.queries_by_depth[depth]["queries"][query] = {
-            "status": "in_progress",
-            "learnings": [],
-            "parent": parent_query
-        }
-
-        # Update total queries
-        self.total_queries += 1
-
-        # Report progress
+        self.current_depth = depth
+        self.current_breadth = len(self.queries_by_depth[depth])
         await self._report_progress("query_started")
 
     async def add_learning(self, query: str, depth: int, learning: str):
-        if depth in self.queries_by_depth and query in self.queries_by_depth[depth]["queries"]:
-            self.queries_by_depth[depth]["queries"][query]["learnings"].append(
+        if depth in self.queries_by_depth and query in self.queries_by_depth[depth]:
+            self.queries_by_depth[depth][query]["learnings"].append(
                 learning)
             await self._report_progress("learning_added")
 
     async def complete_query(self, query: str, depth: int):
-        if depth in self.queries_by_depth and query in self.queries_by_depth[depth]["queries"]:
-            self.queries_by_depth[depth]["queries"][query]["status"] = "completed"
-            self.queries_by_depth[depth]["completed"] += 1
-            self.completed_queries += 1
+        """Mark a query as completed"""
+        if depth in self.queries_by_depth and query in self.queries_by_depth[depth]:
+            if not self.queries_by_depth[depth][query]["completed"]:
+                self.queries_by_depth[depth][query]["completed"] = True
+                self.completed_queries += 1
+                await self._report_progress(f"Completed query: {query}")
 
-            # Update parent status if this query has a parent
-            if query in self.query_parents:
-                await self._update_parent_status(self.query_parents[query])
+                # Check if parent query exists and update its status if all children are complete
+                parent_query = self.query_parents.get(query)
+                if parent_query:
+                    await self._update_parent_status(parent_query)
 
-            # Report progress
-            await self._report_progress("query_completed")
+    async def add_sources(self, query: str, depth: int, sources: list[dict[str, str]]):
+        """Record sources for a specific query"""
+        if depth in self.queries_by_depth and query in self.queries_by_depth[depth]:
+            # Add new sources that aren't already in the list
+            current_sources = self.queries_by_depth[depth][query]["sources"]
+            current_urls = {source["url"] for source in current_sources}
+
+            for source in sources:
+                if source["url"] not in current_urls:
+                    current_sources.append(source)
+                    current_urls.add(source["url"])
+
+            await self._report_progress(f"Added sources for query: {query}")
 
     async def _update_parent_status(self, parent_query: str):
-        # Find the depth of the parent query
-        parent_depth = None
-        for depth, data in self.queries_by_depth.items():
-            if parent_query in data["queries"]:
-                parent_depth = depth
-                break
+        """Update parent query status based on children completion"""
+        # Find all children of this parent
+        children = [q for q, p in self.query_parents.items() if p ==
+                    parent_query]
+
+        # Check if all children are complete
+        parent_depth = next((d for d, queries in self.queries_by_depth.items()
+                             if parent_query in queries), None)
 
         if parent_depth is not None:
-            # Check if all child queries are completed
-            all_children_completed = True
-            for depth, data in self.queries_by_depth.items():
-                for query, query_data in data["queries"].items():
-                    if query_data["parent"] == parent_query and query_data["status"] != "completed":
-                        all_children_completed = False
-                        break
+            all_children_complete = all(
+                self.queries_by_depth[d][q]["completed"]
+                for q in children
+                for d in self.queries_by_depth
+                if q in self.queries_by_depth[d]
+            )
 
-            # If all children are completed, update parent status
-            if all_children_completed:
-                self.queries_by_depth[parent_depth]["queries"][parent_query]["status"] = "children_completed"
-                await self._report_progress("parent_updated")
+            if all_children_complete:
+                # Complete the parent query
+                await self.complete_query(parent_query, parent_depth)
 
     async def _report_progress(self, action: str):
+        """Report current progress and stream to client if callback provided"""
+        # Build event data for streaming
         progress_data = {
+            "type": "research_progress",
             "action": action,
-            "total_queries": self.total_queries,
-            "completed_queries": self.completed_queries,
-            "progress_percentage": round((self.completed_queries / max(1, self.total_queries)) * 100, 2),
             "timestamp": datetime.datetime.now().isoformat(),
-            "depth_progress": {
-                depth: {
-                    "completed": data["completed"],
-                    "total": data["total"],
-                    "percentage": round((data["completed"] / max(1, data["total"])) * 100, 2)
-                }
-                for depth, data in self.queries_by_depth.items()
-            }
+            "completed_queries": self.completed_queries,
+            "total_queries": self.total_queries,
+            "progress_percentage": int((self.completed_queries / max(1, self.total_queries)) * 100)
         }
+
+        # Add tree structure if root query exists
+        if self.root_query:
+            progress_data["tree"] = self._build_research_tree()
 
         # Print progress to console
         print(
@@ -131,50 +137,41 @@ class ResearchProgress:
 
     def _build_research_tree(self):
         """Build a tree structure of the research queries"""
-        if not self.root_query:
-            return {}
-
         def build_node(query):
-            # Find the depth of this query
-            query_depth = None
-            query_data = None
-            for depth, data in self.queries_by_depth.items():
-                if query in data["queries"]:
-                    query_depth = depth
-                    query_data = data["queries"][query]
-                    break
+            """Recursively build the tree node"""
+            # Find the depth for this query
+            depth = next((d for d, queries in self.queries_by_depth.items()
+                          if query in queries), 0)
 
-            if not query_data:
-                return None
+            data = self.queries_by_depth[depth][query]
 
             # Find all children of this query
             children = [q for q, p in self.query_parents.items() if p == query]
 
-            # Build the node
-            node = {
-                "id": self.query_ids.get(query, str(uuid.uuid4())),
+            return {
                 "query": query,
-                "depth": query_depth,
-                "status": query_data["status"],
-                "learnings": query_data["learnings"],
-                "children": [build_node(child) for child in children if child in self.query_order]
+                "id": self.query_ids[query],
+                "status": "completed" if data["completed"] else "in_progress",
+                "depth": depth,
+                "learnings": data["learnings"],
+                "sources": data["sources"],  # Include sources in the tree
+                "sub_queries": [build_node(child) for child in children],
+                "parent_query": self.query_parents.get(query)
             }
 
-            return node
-
-        # Build the tree starting from the root query
-        return build_node(self.root_query)
+        # Start building from the root query
+        if self.root_query:
+            return build_node(self.root_query)
+        return {}
 
     def get_learnings_by_query(self):
         """Get all learnings organized by query"""
-        learnings_by_query = {}
-
-        for depth, data in self.queries_by_depth.items():
-            for query, query_data in data["queries"].items():
-                if query_data["learnings"]:
-                    learnings_by_query[query] = query_data["learnings"]
-
-        return learnings_by_query
+        learnings = {}
+        for depth, queries in self.queries_by_depth.items():
+            for query, data in queries.items():
+                if data["learnings"]:
+                    learnings[query] = data["learnings"]
+        return learnings
 
 
 load_dotenv()
@@ -630,7 +627,7 @@ class DeepSearch:
         max_queries = {
             "fast": 5,
             "balanced": 10,
-            "comprehensive": 15  # kept lower than balanced due to recursive multiplication
+            "comprehensive": 7  # Changed from 15 to 7
         }[self.mode]
 
         queries = await self.generate_queries(
@@ -649,9 +646,21 @@ class DeepSearch:
                 await progress.start_query(query_str, current_depth, parent)
 
                 result = await self.search(query_str)
+                # The search method returns a tuple (formatted_text, sources)
+                formatted_text, new_urls = result
+
+                # Add sources to the progress tracker for this query
+                if new_urls:
+                    sources_list = [
+                        {"url": url_data["link"], "title": url_data["title"]}
+                        for url_data in new_urls.values()
+                        if "link" in url_data and "title" in url_data
+                    ]
+                    await progress.add_sources(query_str, current_depth, sources_list)
+
                 processed_result = await self.process_result(
                     query=query_str,
-                    result=result[0],
+                    result=formatted_text,
                     num_learnings=min(5, math.ceil(breadth / 1.5)),
                     num_follow_up_questions=min(5, math.ceil(breadth / 1.5))
                 )
@@ -750,40 +759,41 @@ class DeepSearch:
         }
 
     async def generate_final_report(self, query: str, learnings: list[str], visited_urls: dict[int, dict]) -> str:
-        # Format sources and learnings for the prompt
-        sources_text = "\n".join([
-            f"{i+1}. {url_data['title']} - {url_data['link']}"
-            for i, url_data in enumerate(visited_urls.values())
-            if 'title' in url_data and 'link' in url_data
-        ])
-
+        # Format learnings for the prompt
         learnings_text = "\n".join([
             f"- {learning}" for learning in learnings
         ])
 
         user_prompt = f"""
-        You are a research assistant tasked with creating a comprehensive report on the following topic:
-        
-        Topic: {query}
-        
-        Based on the research conducted, here are the key learnings:
+		You are a creative storyteller tasked with transforming research into an engaging and distinctive report.
+
+        Research Query: {query}
+
+        Key Discoveries:
         {learnings_text}
-        
-        Sources consulted:
-        {sources_text}
-        
-        Please create a well-structured, comprehensive report that:
-        1. Introduces the topic and its significance
-        2. Organizes the key findings into logical sections with clear headings
-        3. Synthesizes the information into a coherent narrative
-        4. Includes relevant citations to the sources
-        5. Concludes with a summary of the main insights
-        
-        The report should be detailed, informative, and professionally written.
+
+        Craft a captivating report that:
+
+        # CREATIVE APPROACH
+        1. Opens with an imaginative introduction that draws readers into the topic
+        2. Transforms key discoveries into a compelling narrative with your unique voice
+        3. Adds fresh perspectives and unexpected connections between ideas
+        4. Experiments freely with tone, style, and expression
+        5. Concludes with thought-provoking reflections that linger with the reader
+
+        # FORMATTING TOOLS
+        - Create evocative, imaginative headings
+        - Use markdown formatting (##, ###, **bold**, *italics*) for visual interest
+        - Incorporate blockquotes for emphasis or contrast
+        - Deploy bullet points or numbered lists where they enhance clarity
+        - Insert tables to organize information in visually appealing ways
+        - Use horizontal rules (---) to create dramatic pauses or section breaks
+
+        Feel free to be bold, experimental, and expressive while maintaining clarity and coherence. There are no academic conventions to follow - let your creativity flow!
         """
 
         generation_config = {
-            "temperature": 0.7,
+            "temperature": 0.9,  # Increased for more creativity
             "top_p": 0.95,
             "top_k": 40,
             "max_output_tokens": 8192,
@@ -800,90 +810,3 @@ class DeepSearch:
             print(f"Error generating final report: {str(e)}")
             return f"Error generating report: {str(e)}"
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run deep search queries')
-    parser.add_argument('query', type=str, help='The search query')
-    parser.add_argument('--mode', type=str, choices=['fast', 'balanced', 'comprehensive'],
-                        default='balanced', help='Research mode (default: balanced)')
-    parser.add_argument('--num-queries', type=int, default=3,
-                        help='Number of queries to generate (default: 3)')
-    parser.add_argument('--learnings', nargs='*', default=[],
-                        help='List of previous learnings')
-
-    args = parser.parse_args()
-
-    # Start the timer
-    start_time = time.time()
-
-    # Get API key from environment variable
-    api_key = os.getenv('GEMINI_KEY')
-    if not api_key:
-        raise ValueError("Please set GEMINI_KEY environment variable")
-
-    deep_search = DeepSearch(api_key, mode=args.mode)
-
-    breadth_and_depth = deep_search.determine_research_breadth_and_depth(
-        args.query)
-
-    breadth = breadth_and_depth["breadth"]
-    depth = breadth_and_depth["depth"]
-    explanation = breadth_and_depth["explanation"]
-
-    print(f"Breadth: {breadth}")
-    print(f"Depth: {depth}")
-    print(f"Explanation: {explanation}")
-
-    print("To better understand your research needs, please answer these follow-up questions:")
-
-    follow_up_questions = deep_search.generate_follow_up_questions(args.query)
-
-    # get answers to the follow up questions
-    answers = []
-    for question in follow_up_questions:
-        answer = input(f"{question}: ")
-        answers.append({
-            "question": question,
-            "answer": answer
-        })
-
-    questions_and_answers = "\n".join(
-        [f"{answer['question']}: {answer['answer']}" for answer in answers])
-
-    combined_query = f"Initial query: {args.query}\n\n Follow up questions and answers: {questions_and_answers}"
-
-    print(f"\nHere is the combined query: {combined_query}\n\n")
-
-    print("Starting research... \n")
-
-    # Run the deep research
-    results = asyncio.run(deep_search.deep_research(
-        query=combined_query,
-        breadth=breadth,
-        depth=depth,
-        learnings=[],
-        visited_urls={}
-    ))
-
-    # Generate and print the final report
-    final_report = asyncio.run(deep_search.generate_final_report(
-        query=combined_query,
-        learnings=results["learnings"],
-        visited_urls=results["visited_urls"]
-    ))
-
-    # Calculate elapsed time
-    elapsed_time = time.time() - start_time
-    minutes = int(elapsed_time // 60)
-    seconds = int(elapsed_time % 60)
-
-    print("\nFinal Research Report:")
-    print("=====================")
-    print(final_report)
-    print(f"\nTotal research time: {minutes} minutes and {seconds} seconds")
-
-    # Save the report to a file
-    with open("final_report.md", "w") as f:
-        f.write(final_report)
-        f.write(
-            f"\n\nTotal research time: {minutes} minutes and {seconds} seconds")
