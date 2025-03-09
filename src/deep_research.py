@@ -261,11 +261,27 @@ class DeepSearch:
             follow_up_queries: list[str]
 
         user_prompt = f"""
-        Given the following query from the user, ask some follow up questions to clarify the research direction.
+        Based on the following user query, generate {max_questions} follow-up questions that would help clarify what the user wants to know.
+		These questions should:
+		1. Seek to understand the user's specific information needs
+		2. Clarify ambiguous terms or concepts in the original query
+		3. Determine the scope or boundaries of what the user is looking for
+		4. Identify the user's level of familiarity with the topic
+		5. Uncover the user's purpose or goal for seeking this information
 
-		Return a maximum of {max_questions} questions, but feel free to return less if the original query is clear: <query>{query}</query>
-        
-        Format your response as a JSON object with a "follow_up_queries" field containing an array of question strings.
+		User Query: {query}
+
+		Format your response as a JSON object with a single key "follow_up_queries" containing an array of strings.
+		Example:
+		```json
+		{{
+			"follow_up_queries": [
+				"Could you specify what aspects of electric vehicles you're most interested in learning about?",
+				"Are you looking for information about a specific brand or type of electric vehicle?",
+				"Would you like to know about the technical details, environmental impact, or consumer aspects?"
+			]
+		}}
+		```
         """
 
         generation_config = {
