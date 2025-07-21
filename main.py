@@ -22,7 +22,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     # Get API key from environment variable
-    api_key = os.getenv('GEMINI_KEY')
+    api_key = os.getenv('GEMINI_KEY') or os.getenv('GOOGLE_API_KEY')
     if not api_key:
         raise ValueError("Please set GEMINI_KEY environment variable")
 
