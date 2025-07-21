@@ -15,6 +15,8 @@ if __name__ == "__main__":
                         help='Number of queries to generate (default: 3)')
     parser.add_argument('--learnings', nargs='*', default=[],
                         help='List of previous learnings')
+    parser.add_argument('--months-ago', type=int, default=6,
+                        help='Limit search to articles published in the last X months.')
 
     args = parser.parse_args()
 
@@ -26,7 +28,8 @@ if __name__ == "__main__":
     if not api_key:
         raise ValueError("Please set GEMINI_KEY environment variable")
 
-    deep_search = DeepSearch(api_key, mode=args.mode)
+    deep_search = DeepSearch(
+        api_key, mode=args.mode, months_ago=args.months_ago)
 
     breadth_and_depth = deep_search.determine_research_breadth_and_depth(
         args.query)
@@ -92,4 +95,3 @@ if __name__ == "__main__":
         f.write(final_report)
         f.write(
             f"\n\nTotal research time: {minutes} minutes and {seconds} seconds")
-            
