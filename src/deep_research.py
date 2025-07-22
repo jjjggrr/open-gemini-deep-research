@@ -787,45 +787,55 @@ class DeepSearch:
             "tree": research_tree  # Return the tree structure
         }
 
-    async def generate_final_report(self, query: str, learnings: list[str], visited_urls: dict[int, dict]) -> str:
-        # Format learnings for the prompt
-        learnings_text = "\n".join([
-            f"- {learning}" for learning in learnings
-        ])
+    async def generate_final_report(self, query: str, research_tree: dict) -> str:
+        # Format the research tree for the prompt, including learnings and sources
+        def format_tree_node(node, level=0):
+            indent = "  " * level
+            node_text = f"{indent}- Query: {node['query']}\n"
+            if node.get('learnings'):
+                node_text += f"{indent}  - Learnings:\n"
+                for learning in node['learnings']:
+                    node_text += f"{indent}    - {learning}\n"
+            if node.get('sources'):
+                node_text += f"{indent}  - Sources:\n"
+                for source in node['sources']:
+                    node_text += f"{indent}    - [{source['title']}]({source['url']})\n"
+            for sub_query in node.get('sub_queries', []):
+                node_text += format_tree_node(sub_query, level + 1)
+            return node_text
+
+        research_data_text = format_tree_node(research_tree)
 
         user_prompt = f"""
-                		You are a creative storyteller tasked with transforming research into an engaging and distinctive report.
-                
-                        Research Query: {query}
-                
-                        Key Discoveries:
-                        {learnings_text}
-                
-                        Craft a captivating report that:
-                
-                        # CREATIVE APPROACH
-                        1. Opens with an imaginative introduction that draws readers into the topic
-                        2. Transforms key discoveries into a compelling narrative with your unique voice
-                        3. Adds fresh perspectives and unexpected connections between ideas
-                        4. Experiments freely with tone, style, and expression
-                        5. Concludes with thought-provoking reflections that linger with the reader
-                
-                        # FORMATTING TOOLS
-                        - Create evocative, imaginative headings
-                        - Use markdown formatting (##, ###, **bold**, *italics*) for visual interest
-                        - Incorporate blockquotes for emphasis or contrast
-                        - Deploy bullet points or numbered lists where they enhance clarity
-                        - Insert tables to organize information in visually appealing ways
-                        - Use horizontal rules (---) to create dramatic pauses or section breaks
-                
-                        Feel free to be bold, experimental, and expressive while maintaining clarity and coherence. There are no academic conventions to follow - let your creativity flow!
-                        """
+            You are a professional research analyst. Your task is to create a clear, engaging, and informative internal report for employees and managers.
+            The report should summarize key findings, including any relevant legislative changes, based on the provided research data.
+
+            Research Query: {query}
+
+            Research Data (including queries, learnings, and sources):
+            {research_data_text}
+
+            ## INSTRUCTIONS ##
+            1.  **Synthesize a Report:** Write a professional and engaging summary of the research findings.
+            2.  **Structure:**
+                *   Start with a concise "Executive Summary" (1-2 paragraphs).
+                *   Use clear headings for different themes or topics (e.g., "Key Technological Advances," "Market Trends," "Legislative Updates").
+                *   Use bullet points to present key findings for readability.
+            3.  **Tone:** Maintain a professional, objective, yet engaging tone. Avoid overly creative or narrative language. The goal is to inform, not to tell a story.
+            4.  **Cite Sources:**
+                *   When you mention a finding, cite the source using Markdown links `[Source Title](URL)`.
+                *   The source information is provided in the "Research Data" section.
+                *   Integrate citations naturally within the text where the information is presented.
+            5.  **Formatting:** Use Markdown for structure (## for headings, * for bullet points).
+
+            Produce only the final Markdown report.
+            """
 
         generation_config = {
-            "temperature": 0.9,  # Increased for more creativity
+            "temperature": 0.5,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 8192,
+            "max_output_tokens": 12000,
         }
 
         try:

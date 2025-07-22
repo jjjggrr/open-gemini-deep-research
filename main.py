@@ -5,7 +5,6 @@ import time
 
 from src.deep_research import DeepSearch
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run deep search queries')
     parser.add_argument('query', type=str, help='The search query')
@@ -50,13 +49,10 @@ if __name__ == "__main__":
     answers = []
     for question in follow_up_questions:
         answer = input(f"{question}: ")
-        answers.append({
-            "question": question,
-            "answer": answer
-        })
+        answers.append(answer)
 
     questions_and_answers = "\n".join(
-        [f"{answer['question']}: {answer['answer']}" for answer in answers])
+        [f"{q}: {a}" for q, a in zip(follow_up_questions, answers)])
 
     combined_query = f"Initial query: {args.query}\n\n Follow up questions and answers: {questions_and_answers}"
 
@@ -66,18 +62,12 @@ if __name__ == "__main__":
 
     # Run the deep research
     results = asyncio.run(deep_search.deep_research(
-        query=combined_query,
-        breadth=breadth,
-        depth=depth,
-        learnings=[],
-        visited_urls={}
-    ))
+        combined_query, breadth=breadth, depth=depth, learnings=args.learnings))
 
     # Generate and print the final report
     final_report = asyncio.run(deep_search.generate_final_report(
         query=combined_query,
-        learnings=results["learnings"],
-        visited_urls=results["visited_urls"]
+        research_tree=results["tree"]
     ))
 
     # Calculate elapsed time
