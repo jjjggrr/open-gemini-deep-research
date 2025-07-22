@@ -482,25 +482,13 @@ class DeepSearch:
             print(f"Error processing grounding metadata: {e}")
             return answer, {}
 
+
     async def search(self, query: str):
         model_id = "gemini-2.0-flash"
 
-        tool_config = {"google_search": {}}
-
-        if self.months_ago is not None and self.months_ago > 0:
-            # Calculate the start date
-            start_date = datetime.datetime.now() - relativedelta(months=self.months_ago)
-            # Create date objects for the tool
-            date_obj = Date(
-                year=start_date.year, month=start_date.month, day=start_date.day)
-
-            tool_config["google_search"]["search_control"] = {
-                "date_range": {
-                    "start_date": date_obj
-                }
-            }
-
-        google_search_tool = types.Tool.from_dict(tool_config)
+        google_search_tool = types.Tool(
+            google_search=types.GoogleSearch()
+        )
 
         generation_config = {
             "temperature": 1,
@@ -839,7 +827,7 @@ class DeepSearch:
             "temperature": 0.5,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 12000,
+            "max_output_tokens": 8192,
         }
 
         try:
