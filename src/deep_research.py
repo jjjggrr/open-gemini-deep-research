@@ -484,34 +484,59 @@ class DeepSearch:
 
 
     async def search(self, query: str):
-        model_id = "gemini-2.0-flash"
+                model_id = "gemini-2.0-flash"
 
-        google_search_tool = types.Tool(
-            google_search=types.GoogleSearch()
-        )
+                google_search_tool = None
 
-        generation_config = {
-            "temperature": 1,
-            "top_p": 0.95,
-            "top_k": 40,
-            "max_output_tokens": 8192,
-            "response_mime_type": "text/plain",
-            "response_modalities": ["TEXT"],
-            "tools": [google_search_tool]
-        }
+                if self.months_ago is not None and self.months_ago > 0:
+                    # Calculate the start date
+                    start_date = datetime.datetime.now() - relativedelta(months=self.months_ago)
+                    # Create date objects for the tool
+                    date_obj = Date(
+                        year=start_date.year, month=start_date.month, day=start_date.day)
 
-        response = await self.client.aio.models.generate_content(
-            model=model_id,
-            contents=query,
-            config=generation_config
-        )
+                    tool_config = {
+                        "google_search": {
+                            "search_control": {
+                                "date_range": {
+                                    "start_date": date_obj
+                                }
+                            }
+                        }
+                    }
+                    google_search_tool = types.Tool.from_dict(tool_config)
+                else:
+                    # For a default search, use the direct constructor
+                    google_search_tool = types.Tool(
+                        google_search=types.GoogleSearch()
+                    )
 
-        response_dict = response.model_dump()
+                generation_config = {
+                    "temperature": 1,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "max_output_tokens": 8192,
+                    "response_mime_type": "text/plain",
+                    "response_modalities": ["TEXT"],
+                    "tools": [google_search_tool]
+                }
 
-        formatted_text, sources = self.format_text_with_sources(
-            response_dict, response.text)
+                try:
+                    response = await self.client.aio.models.generate_content(
+                        model=model_id,
+                        contents=query,
+                        config=generation_config
+                    )
 
-        return formatted_text, sources
+                    response_dict = response.model_dump()
+
+                    formatted_text, sources = self.format_text_with_sources(
+                        response_dict, response.text)
+
+                    return formatted_text, sources
+                except Exception as e:
+                    print(f"Error during API call in search: {e}")
+                    return "", {}
 
     async def process_result(
             self,

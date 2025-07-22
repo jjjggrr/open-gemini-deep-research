@@ -14,7 +14,7 @@ if __name__ == "__main__":
                         help='Number of queries to generate (default: 3)')
     parser.add_argument('--learnings', nargs='*', default=[],
                         help='List of previous learnings')
-    parser.add_argument('--months-ago', type=int, default=6,
+    parser.add_argument('--months-ago', type=int,
                         help='Limit search to articles published in the last X months.')
 
     args = parser.parse_args()
