@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.type.date_pb2 import Date
 from pydantic import BaseModel
 
 
@@ -484,19 +485,22 @@ class DeepSearch:
     async def search(self, query: str):
         model_id = "gemini-2.0-flash"
 
-        search_control = None
+        tool_config = {"google_search": {}}
+
         if self.months_ago is not None and self.months_ago > 0:
             # Calculate the start date
             start_date = datetime.datetime.now() - relativedelta(months=self.months_ago)
             # Create date objects for the tool
-            date_obj = types.Date(
+            date_obj = Date(
                 year=start_date.year, month=start_date.month, day=start_date.day)
-            search_control = types.SearchControl(
-                date_range=types.DateRange(start_date=date_obj))
 
-        google_search_tool = types.Tool(
-            google_search=types.GoogleSearch(search_control=search_control)
-        )
+            tool_config["google_search"]["search_control"] = {
+                "date_range": {
+                    "start_date": date_obj
+                }
+            }
+
+        google_search_tool = types.Tool.from_dict(tool_config)
 
         generation_config = {
             "temperature": 1,
